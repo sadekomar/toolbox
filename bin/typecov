@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# Type-coverage ratchet. The floor lives here, not in the repo.
+set -uo pipefail
+
+TOOLBOX="$HOME/Documents/toolbox"
+FLOORS="$TOOLBOX/type-coverage-floors.json"
+case "${1:-}" in
+  -h|--help)
+    cat <<'USAGE'
+typecov <package> [check|bump]
+
+  check   measure and compare against the recorded floor (default)
+  bump    record the current number as the new floor
+
+Floors are stored in ~/Documents/toolbox/type-coverage-floors.json
+USAGE
+    exit 0 ;;
+esac
+
+REPO=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "not in a git repo"; exit 1; }
+
+PKG="${1:-backend}"
+ACTION="${2:-check}"
+
+TARGET="$REPO/packages/$PKG"
+[ -f "$TARGET/tsconfig.json" ] || { echo "no tsconfig at packages/$PKG"; exit 1; }
+
+[ -f "$FLOORS" ] || echo '{}' > "$FLOORS"
+
+RAW=$(cd "$TARGET" && "$TOOLBOX/node_modules/.bin/type-coverage" 2>&1)
+PCT=$(printf '%s\n' "$RAW" | grep -oE '[0-9]+\.[0-9]+%' | tr -d '%' | tail -1)
+
+if [ -z "$PCT" ]; then
+  echo "could not parse type-coverage output:"
+  printf '%s\n' "$RAW"
+  exit 1
+fi
+
+FLOOR=$(node -e "
+  const f = require('$FLOORS')
+  process.stdout.write(String(f['$PKG'] ?? ''))
+")
+
+if [ "$ACTION" = "bump" ] || [ -z "$FLOOR" ]; then
+  node -e "
+    const fs = require('fs')
+    const f = require('$FLOORS')
+    f['$PKG'] = $PCT
+    fs.writeFileSync('$FLOORS', JSON.stringify(f, null, 2) + '\n')
+  "
+  if [ -z "$FLOOR" ]; then
+    echo "packages/$PKG: ${PCT}% typed — floor recorded"
+  else
+    echo "packages/$PKG: ${PCT}% typed — floor raised from ${FLOOR}%"
+  fi
+  exit 0
+fi
+
+node -e "
+const pct = $PCT, floor = $FLOOR
+const d = (pct - floor).toFixed(2)
+if (pct + 1e-9 < floor) {
+  console.log(\`packages/$PKG: \${pct}% typed — BELOW floor \${floor}% (\${d})\`)
+  process.exit(1)
+}
+if (pct > floor) {
+  console.log(\`packages/$PKG: \${pct}% typed — above floor \${floor}% (+\${d}). 'typecov $PKG bump' to lock it in.\`)
+} else {
+  console.log(\`packages/$PKG: \${pct}% typed — at floor\`)
+}
+"

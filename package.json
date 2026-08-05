@@ -1,0 +1,26 @@
+{
+  "name": "toolbox",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "dependency-cruiser": "^18.1.1",
+    "eslint": "^9.39.5",
+    "eslint-plugin-boundaries": "^7.1.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-sonarjs": "^3.0.7",
+    "fast-check": "^4.9.0",
+    "jscpd": "^5.0.14",
+    "type-coverage": "^2.30.1",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.66.0",
+    "vitest": "^4.1.10"
+  }
+}

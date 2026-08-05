@@ -1,0 +1,176 @@
+#!/usr/bin/env bash
+# Personal pre-PR quality pass for the instatus monorepo.
+# Nothing here lives in the repo; config and deps are in ~/Documents/toolbox.
+set -uo pipefail
+
+TOOLBOX="$HOME/Documents/toolbox"
+ESLINT="$TOOLBOX/node_modules/.bin/eslint"
+CONFIG="$TOOLBOX/eslint.personal.mjs"
+case "${1:-}" in
+  -h|--help)
+    cat <<'USAGE'
+precheck              lint files changed vs origin/main (type-aware + readability + house rules)
+precheck --strict     also run a noUncheckedIndexedAccess pass, filtered to changed files
+precheck --deps       also check backend module boundaries and import cycles
+precheck --dupes      also detect copy-paste within your changed files
+precheck --full       --strict --deps --dupes together
+precheck --pedantic   add no-unnecessary-condition + require-await (noisy)
+precheck --whole-file show findings on untouched lines too, not just your diff
+precheck --all <path> lint a whole directory instead of the diff
+precheck --base <ref> compare against a different base branch
+USAGE
+    exit 0 ;;
+esac
+
+REPO=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "not in a git repo"; exit 1; }
+cd "$REPO" || exit 1
+
+# Local main goes stale for months here; origin/main is the honest baseline.
+if [ -n "${PRECHECK_BASE:-}" ]; then
+  BASE="$PRECHECK_BASE"
+elif git rev-parse --verify --quiet origin/main >/dev/null 2>&1; then
+  BASE="origin/main"
+else
+  BASE="main"
+fi
+
+MODE="diff"
+TARGET=""
+RUN_TSC=0
+RUN_DEPS=0
+RUN_DUPES=0
+SHOW_WHOLE=0
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --all) MODE="all"; TARGET="${2:-.}"; shift 2 ;;
+    --strict) RUN_TSC=1; shift ;;
+    --deps) RUN_DEPS=1; shift ;;
+    --dupes) RUN_DUPES=1; shift ;;
+    --full) RUN_TSC=1; RUN_DEPS=1; RUN_DUPES=1; shift ;;
+    --pedantic) export PRECHECK_PEDANTIC=1; shift ;;
+    --whole-file) SHOW_WHOLE=1; shift ;;
+    --base) BASE="$2"; shift 2 ;;
+    *) echo "unknown flag: $1"; exit 1 ;;
+  esac
+done
+
+files=()
+
+collect() {
+  while IFS= read -r -d '' f; do
+    case "$f" in
+      *.ts|*.tsx) [ -f "$f" ] && files+=("$f") ;;
+    esac
+  done
+}
+
+if [ "$MODE" = "all" ]; then
+  collect < <(find "$TARGET" -type f \( -name '*.ts' -o -name '*.tsx' \) \
+    -not -path '*/node_modules/*' -not -path '*/dist/*' \
+    -not -path '*/.next/*' -not -path '*/generated/*' -print0)
+else
+  git rev-parse --verify "$BASE" >/dev/null 2>&1 || { echo "unknown base ref '$BASE'"; exit 1; }
+  git fetch origin main --quiet 2>/dev/null
+  collect < <(git diff -z --name-only --diff-filter=ACMR "$BASE"...HEAD 2>/dev/null)
+  collect < <(git diff -z --name-only --diff-filter=ACMR HEAD 2>/dev/null)
+  collect < <(git ls-files -z --others --exclude-standard 2>/dev/null)
+fi
+
+if [ ${#files[@]} -gt 0 ]; then
+  # No mapfile: macOS ships bash 3.2.
+  deduped=()
+  while IFS= read -r f; do deduped+=("$f"); done < <(printf '%s\n' "${files[@]}" | sort -u)
+  files=("${deduped[@]}")
+fi
+
+if [ ${#files[@]} -eq 0 ]; then
+  echo "precheck: nothing to check (no changed .ts/.tsx vs $BASE)"
+  exit 0
+fi
+
+echo "precheck: ${#files[@]} file(s) vs $BASE"
+if [ ${#files[@]} -gt 400 ]; then
+  echo "note: that is a lot for one review pass — consider --base <closer-ref>"
+fi
+echo
+
+# Type-aware linting holds a full TS program in memory; the default heap is not enough.
+FILTER_MODE="lines"
+[ "$MODE" = "all" ] && FILTER_MODE="whole"
+[ "$SHOW_WHOLE" = "1" ] && FILTER_MODE="whole"
+
+ESLINT_ERR=$(mktemp)
+NODE_OPTIONS="--max-old-space-size=8192" \
+  "$ESLINT" --no-config-lookup --no-warn-ignored --format json \
+  --config "$CONFIG" "${files[@]}" 2>"$ESLINT_ERR" \
+  | node "$TOOLBOX/filter-to-diff.mjs" "$BASE" "$REPO" "$FILTER_MODE"
+STATUSES=("${PIPESTATUS[@]}")
+ESLINT_STATUS=${STATUSES[0]}
+LINT_STATUS=${STATUSES[1]}
+if [ "$ESLINT_STATUS" -gt 1 ]; then
+  echo "eslint failed (exit $ESLINT_STATUS):"
+  cat "$ESLINT_ERR"
+  rm -f "$ESLINT_ERR"
+  exit "$ESLINT_STATUS"
+fi
+rm -f "$ESLINT_ERR"
+
+if [ "$RUN_DUPES" = "1" ]; then
+  echo
+  echo "── copy-paste within your changes ────────────────────────────"
+  # Tests repeat arrange blocks on purpose; that is not the duplication worth seeing.
+  dupe_files=()
+  for f in "${files[@]}"; do
+    case "$f" in
+      *.test.ts|*.test.tsx|*/tests/*|*/__tests__/*) ;;
+      *) dupe_files+=("$f") ;;
+    esac
+  done
+  DUPE_OUT=$(mktemp -d)
+  if [ ${#dupe_files[@]} -gt 0 ]; then
+    "$TOOLBOX/node_modules/.bin/jscpd" "${dupe_files[@]}" \
+      --min-lines 8 --min-tokens 70 --absolute --silent \
+      --reporters json --output "$DUPE_OUT" >/dev/null 2>&1
+  fi
+  if [ -f "$DUPE_OUT/jscpd-report.json" ]; then
+    node "$TOOLBOX/dupes-report.mjs" "$REPO" < "$DUPE_OUT/jscpd-report.json"
+  else
+    echo "no duplicated blocks among your changed files"
+  fi
+  rm -rf "$DUPE_OUT"
+fi
+
+if [ "$RUN_DEPS" = "1" ]; then
+  echo
+  echo "── dependency rules (backend) ────────────────────────────────"
+  backend_files=()
+  for f in "${files[@]}"; do
+    case "$f" in packages/backend/src/*) backend_files+=("$f") ;; esac
+  done
+  if [ ${#backend_files[@]} -eq 0 ]; then
+    echo "no backend files changed"
+  else
+    scopes=$(printf '%s\n' "${backend_files[@]}" \
+      | sed -n 's|^packages/backend/\(src/modules/[^/]*\)/.*|\1|p' | sort -u)
+    [ -z "$scopes" ] && scopes="src"
+    ( cd "$REPO/packages/backend" && \
+      "$TOOLBOX/node_modules/.bin/depcruise" --config "$TOOLBOX/depcruise.personal.cjs" \
+        --output-type json $scopes 2>/dev/null ) \
+      | node "$TOOLBOX/deps-report.mjs" "$REPO" "packages/backend" "${backend_files[@]}"
+  fi
+fi
+
+if [ "$RUN_TSC" = "1" ]; then
+  echo
+  echo "── noUncheckedIndexedAccess pass ─────────────────────────────"
+  pkgs=$(printf '%s\n' "${files[@]}" | sed -n 's|^\(packages/[^/]*\)/.*|\1|p' | sort -u)
+  TSC_MODE="tsc"
+  [ "$FILTER_MODE" = "whole" ] && TSC_MODE="tsc-whole"
+  for pkg in $pkgs; do
+    [ -f "$pkg/tsconfig.json" ] || continue
+    "$REPO/node_modules/.bin/tsc" -p "$pkg/tsconfig.json" --noEmit --noUncheckedIndexedAccess 2>&1
+  done | node "$TOOLBOX/filter-to-diff.mjs" "$BASE" "$REPO" "$TSC_MODE"
+fi
+
+exit $LINT_STATUS

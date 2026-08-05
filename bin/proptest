@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Property-test probes against repo source. fast-check lives here, not in the repo.
+exec node "$HOME/Documents/toolbox/node_modules/.bin/vitest" run \
+  --config "$HOME/Documents/toolbox/vitest.config.mjs" \
+  --root "$HOME/Documents/toolbox" "$@"

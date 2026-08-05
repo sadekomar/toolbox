@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# Umbrella for the personal toolbox. Bare = roster; `toolbox <name> ...` dispatches.
+# The roster is tools.json, which the Dojo build reads too — add a tool once.
+set -uo pipefail
+
+TOOLBOX="$HOME/Documents/toolbox"
+MANIFEST="$TOOLBOX/tools.json"
+
+BOLD=$'\033[1m'; DIM=$'\033[2m'; RESET=$'\033[0m'
+
+roster() {
+  echo "${BOLD}toolbox${RESET} ${DIM}— personal CLIs, outside the repo on purpose${RESET}"
+  echo
+  node -e '
+    const m = require(process.argv[1])
+    const pad = Math.max(...m.tools.map((t) => t.name.length))
+    for (const t of m.tools) {
+      const mark = t.external ? "\x1b[2m*\x1b[0m" : " "
+      console.log(`  ${mark} \x1b[1m${t.name.padEnd(pad)}\x1b[0m  ${t.summary}`)
+    }
+  ' "$MANIFEST"
+  echo
+  echo "${DIM}  toolbox <name> [args]   run one${RESET}"
+  echo "${DIM}  toolbox help <name>     its own --help${RESET}"
+  echo "${DIM}  * provided by git, not by this directory${RESET}"
+  echo "${DIM}  docs: $TOOLBOX/README.md${RESET}"
+}
+
+[ $# -eq 0 ] && { roster; exit 0; }
+
+case "$1" in
+  -h|--help|help)
+    if [ $# -ge 2 ]; then
+      [ -x "$TOOLBOX/bin/$2" ] || { echo "no such tool: $2"; exit 1; }
+      exec "$TOOLBOX/bin/$2" --help
+    fi
+    roster; exit 0 ;;
+  ls|list) roster; exit 0 ;;
+esac
+
+NAME="$1"; shift
+if [ -x "$TOOLBOX/bin/$NAME" ] && [ "$NAME" != "toolbox" ]; then
+  exec "$TOOLBOX/bin/$NAME" "$@"
+fi
+
+echo "no such tool: $NAME"
+echo
+roster
+exit 1

@@ -1,0 +1,26 @@
+{
+  "runbook": "runbooks/toolbox.html",
+  "tools": [
+    {
+      "name": "precheck",
+      "summary": "pre-PR quality pass, scoped to the lines you changed",
+      "usage": "precheck [--full] [--strict] [--deps] [--dupes] [--pedantic] [--whole-file] [--all <path>] [--base <ref>]"
+    },
+    {
+      "name": "typecov",
+      "summary": "type-coverage ratchet \u2014 floors recorded outside the repo",
+      "usage": "typecov <package> [check|bump]"
+    },
+    {
+      "name": "proptest",
+      "summary": "fast-check probes that import repo source without adding a repo dep",
+      "usage": "proptest [vitest args]"
+    },
+    {
+      "name": "git dft",
+      "summary": "syntax-aware diff (difftastic), wired as a difftool",
+      "usage": "git dft <ref> [-- <path>]",
+      "external": true
+    }
+  ]
+}

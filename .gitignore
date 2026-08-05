@@ -1,0 +1,6 @@
+node_modules/
+.DS_Store
+*.log
+
+# type-coverage-floors.json is deliberately tracked: the floor only means
+# something if its history is recorded, and a fresh clone should inherit it.
