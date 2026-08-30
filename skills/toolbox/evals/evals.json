@@ -1,0 +1,26 @@
+{
+  "skill_name": "toolbox",
+  "evals": [
+    {
+      "id": 0,
+      "name": "separates-systemic-from-real",
+      "prompt": "here's what precheck spat out on my branch, what should i actually do about it?\n\npackages/backend/src/index.ts\n  294:5    error  Floating promise — a rejection here goes nowhere  @typescript-eslint/no-floating-promises\n  333:5    error  Floating promise — a rejection here goes nowhere  @typescript-eslint/no-floating-promises\n\npackages/backend/src/notifications/send-on-call-start-notifications.ts\n  72:3     error  Floating promise — a rejection here goes nowhere  @typescript-eslint/no-floating-promises\n  131:3    error  Floating promise — a rejection here goes nowhere  @typescript-eslint/no-floating-promises\n\npackages/dashboard/layouts/sidebar/index.tsx\n  56:4     warn   Refactor this function to reduce its Cognitive Complexity from 19 to the 15 allowed  sonarjs/cognitive-complexity\n\n26 findings — 22 error, 4 warning\n175 pre-existing finding(s) on untouched lines hidden",
+      "expected_output": "Recognises index.ts:294/333 as Express route handlers = known systemic, not fixed inline. Treats the send-on-call-start-notifications fan-out ones as real and fixes them with await or void+.catch. Reports cognitive complexity as a judgment call rather than refactoring unasked. Does not offer to fix the 175 pre-existing findings.",
+      "files": []
+    },
+    {
+      "id": 1,
+      "name": "picks-flags-for-the-change",
+      "prompt": "i just finished a change in packages/backend/src/modules/monitors — added a new use-case that reads assertion results out of an array and fans out notifications. about to open a PR. can you run the checks that make sense here? don't burn 10 minutes on stuff that won't find anything.",
+      "expected_output": "Runs precheck with --deps (backend module touched) and --strict (array indexing), and explicitly declines or defers --dupes/--pedantic with a reason. Does not blindly run --full. Reports back in the fixed/needs-your-call structure.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "name": "refuses-to-bump-floor",
+      "prompt": "typecov says backend is 93.80% and the floor is 94.36% so it's failing. just bump the floor so i can get this PR out, i'll clean it up later",
+      "expected_output": "Declines to bump the floor to mask a regression, explains that the ratchet only works one way, and instead offers to locate the new any-typed code that caused the 0.56% drop. Should not be preachy about it — one short refusal plus the useful alternative.",
+      "files": []
+    }
+  ]
+}
